@@ -1,4 +1,8 @@
 const ws = require('nodejs-websocket')
+const { start } = require('./startController');
+const { snake } = require('./snakeRunController');
+const { unsuspend } = require('./unsuspend');
+const { pauseGame } = require('./pauseGame');
 var wsserver;
 const xAtoms = 20;
 const yAtoms = 15;
@@ -8,57 +12,34 @@ const width = 20;
 const startQueue = new Set();
 // 食物触发的次数
 let foodIndex = 0;
+// 实例化启动游戏的类
+const startGame = new start(startQueue,xAtoms,yAtoms,height,width);
 // 处理所有事件的集中的对象数组
 const bundleFunction = [
     // 等待所有玩家连接
     {
         type: 'gameStart',
         fn: (sendMessage,callBackFunction) => {
-            startQueue.add(sendMessage.id);
-            if(startQueue.size == 1){
-                callBackFunction(wsserver,JSON.stringify(
-                        {
-                            type:'waiting',
-                            message:`等待连接中，目前连接数：${startQueue.size} / 2`,
-                        }
-                    )
-                ); 
-            }
-            if(startQueue.size == 2){
-                const xDistance = Math.floor(Math.random() * xAtoms);
-                const yDistance = Math.floor(Math.random() * yAtoms);
-                callBackFunction(wsserver,JSON.stringify(
-                        {
-                            type:'startGame',
-                            message:`已连接到游戏，目前连接数：${startQueue.size} / 2`,
-                            xDistance: xDistance * width,
-                            yDistance: yDistance * height
-                        }
-                    )
-                );
-                startQueue.clear();
-            }
+            startGame.setOtherObj(wsserver,sendMessage,callBackFunction);
+            startGame.begin();
         }
     },
     // 获取蛇运动的方位
     {
         type: 'snakeRun',
         fn: (sendMessage,callBackFunction) => {
-            console.log(`广播蛇的方位${sendMessage.position}`);
-            callBackFunction(wsserver,JSON.stringify(
-                    {
-                        type:'snakeRun',
-                        message: sendMessage.position,
-                    }
-                )
-            );
+            const snakeRun = new snake(wsserver,sendMessage,callBackFunction);
+            snakeRun.run();
         }
     },
     // 判断是否吃到了食物
     {
         type: 'eatFood',
         fn: (sendMessage,callBackFunction) => {
-            foodIndex ++ ;
+            foodIndex ++;
+            if(foodIndex == 2){
+                foodIndex = 0;
+            }
             if(foodIndex == 1){
                 const xDistance = Math.floor(Math.random() * xAtoms);
                 const yDistance = Math.floor(Math.random() * yAtoms);
@@ -71,31 +52,22 @@ const bundleFunction = [
                     )
                 );
             }
-            if(foodIndex == 2){
-                foodIndex = 0;
-            }
         }
     },
     // 结束暂停开始游戏
     {
         type: 'start',
         fn: (sendMessage,callBackFunction) => {
-            callBackFunction(wsserver,JSON.stringify(
-                {
-                    type: 'start'
-                }
-            ));
+            const un = new unsuspend(wsserver,sendMessage,callBackFunction);
+            un.again();
         }
     },
     // 暂停游戏
     {
         type: 'pause',
         fn: (sendMessage,callBackFunction) => {
-            callBackFunction(wsserver,JSON.stringify(
-                {
-                    type: 'pause'
-                }
-            ))
+            const pa = new pauseGame(wsserver,sendMessage,callBackFunction);
+            pa.pause();
         }
     }
 ]
@@ -105,8 +77,6 @@ class wbServe{
         wsserver = ws.createServer(conn => {
             conn.on('text',str => {
                 let sendMessage = JSON.parse(str);
-                console.log(sendMessage);
-                console.log(bundleFunction.filter(ele => ele.type == sendMessage.message)[0]);
                 bundleFunction.filter(ele => ele.type == sendMessage.message)[0].fn(sendMessage,broadcast);
             })
             conn.on('close',(code,reason) => {
@@ -117,6 +87,7 @@ class wbServe{
                 }
             })
             conn.on('error',(code,reason) => {
+                console.log('连接出现异常');
             })
         }).listen(8080);
         // 广播消息
